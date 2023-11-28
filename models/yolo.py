@@ -61,16 +61,14 @@ class Detect(nn.Module):
                 z.append(y.view(bs, -1, self.no))
 
         if self.training:
-            out = x
+            return x
         elif self.end2end:
-            out = torch.cat(z, 1)
+            return torch.cat(z, 1)
         elif self.include_nms:
             z = self.convert(z)
-            out = (z, )
+            return (z, )
         else:
-            out = (torch.cat(z, 1), x)
-
-        return out
+            return torch.cat(z, 1), x
 
     @staticmethod
     def _make_grid(nx=20, ny=20):
@@ -156,16 +154,14 @@ class IDetect(nn.Module):
                 z.append(y.view(bs, -1, self.no))
 
         if self.training:
-            out = x
+            return x
         elif self.end2end:
-            out = torch.cat(z, 1)
+            return torch.cat(z, 1)
         elif self.include_nms:
             z = self.convert(z)
-            out = (z, )
+            return (z, )
         else:
-            out = (torch.cat(z, 1), x)
-
-        return out
+            return torch.cat(z, 1), x
     
     def fuse(self):
         print("IDetect.fuse")
@@ -249,7 +245,6 @@ class IKeypoint(nn.Module):
 
             bs, _, ny, nx = x[i].shape  # x(bs,255,20,20) to x(bs,3,20,20,85)
             x[i] = x[i].view(bs, self.na, self.no, ny, nx).permute(0, 1, 3, 4, 2).contiguous()
-            x_det = x[i][..., :6]
             x_kpt = x[i][..., 6:]
 
             if not self.training:  # inference
@@ -258,13 +253,10 @@ class IKeypoint(nn.Module):
                 kpt_grid_x = self.grid[i][..., 0:1]
                 kpt_grid_y = self.grid[i][..., 1:2]
 
-                if self.nkpt == 0:
-                    y = x[i].sigmoid()
-                else:
-                    y = x_det.sigmoid()
-
+                x_det = x[i][..., :6]
+                y = x[i].sigmoid() if self.nkpt == 0 else x_det.sigmoid()
+                xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                 if self.inplace:
-                    xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     wh = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i].view(1, self.na, 1, 1, 2) # wh
                     if self.nkpt != 0:
                         x_kpt[..., 0::3] = (x_kpt[..., ::3] * 2. - 0.5 + kpt_grid_x.repeat(1,1,1,1,17)) * self.stride[i]  # xy
@@ -284,7 +276,6 @@ class IKeypoint(nn.Module):
                     y = torch.cat((xy, wh, y[..., 4:], x_kpt), dim = -1)
 
                 else:  # for YOLOv5 on AWS Inferentia https://github.com/ultralytics/yolov5/pull/2953
-                    xy = (y[..., 0:2] * 2. - 0.5 + self.grid[i]) * self.stride[i]  # xy
                     wh = (y[..., 2:4] * 2) ** 2 * self.anchor_grid[i]  # wh
                     if self.nkpt != 0:
                         y[..., 6:] = (y[..., 6:] * 2. - 0.5 + self.grid[i].repeat((1,1,1,1,self.nkpt))) * self.stride[i]  # xy
@@ -375,16 +366,14 @@ class IAuxDetect(nn.Module):
                 z.append(y.view(bs, -1, self.no))
 
         if self.training:
-            out = x
+            return x
         elif self.end2end:
-            out = torch.cat(z, 1)
+            return torch.cat(z, 1)
         elif self.include_nms:
             z = self.convert(z)
-            out = (z, )
+            return (z, )
         else:
-            out = (torch.cat(z, 1), x)
-
-        return out
+            return torch.cat(z, 1), x
     
     def fuse(self):
         print("IAuxDetect.fuse")
@@ -567,24 +556,23 @@ class Model(nn.Module):
         logger.info('')
 
     def forward(self, x, augment=False, profile=False):
-        if augment:
-            img_size = x.shape[-2:]  # height, width
-            s = [1, 0.83, 0.67]  # scales
-            f = [None, 3, None]  # flips (2-ud, 3-lr)
-            y = []  # outputs
-            for si, fi in zip(s, f):
-                xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
-                yi = self.forward_once(xi)[0]  # forward
-                # cv2.imwrite(f'img_{si}.jpg', 255 * xi[0].cpu().numpy().transpose((1, 2, 0))[:, :, ::-1])  # save
-                yi[..., :4] /= si  # de-scale
-                if fi == 2:
-                    yi[..., 1] = img_size[0] - yi[..., 1]  # de-flip ud
-                elif fi == 3:
-                    yi[..., 0] = img_size[1] - yi[..., 0]  # de-flip lr
-                y.append(yi)
-            return torch.cat(y, 1), None  # augmented inference, train
-        else:
+        if not augment:
             return self.forward_once(x, profile)  # single-scale inference, train
+        img_size = x.shape[-2:]  # height, width
+        s = [1, 0.83, 0.67]  # scales
+        f = [None, 3, None]  # flips (2-ud, 3-lr)
+        y = []  # outputs
+        for si, fi in zip(s, f):
+            xi = scale_img(x.flip(fi) if fi else x, si, gs=int(self.stride.max()))
+            yi = self.forward_once(xi)[0]  # forward
+            # cv2.imwrite(f'img_{si}.jpg', 255 * xi[0].cpu().numpy().transpose((1, 2, 0))[:, :, ::-1])  # save
+            yi[..., :4] /= si  # de-scale
+            if fi == 2:
+                yi[..., 1] = img_size[0] - yi[..., 1]  # de-flip ud
+            elif fi == 3:
+                yi[..., 0] = img_size[1] - yi[..., 0]  # de-flip lr
+            y.append(yi)
+        return torch.cat(y, 1), None  # augmented inference, train
 
     def forward_once(self, x, profile=False):
         y, dt = [], []  # outputs
@@ -596,7 +584,7 @@ class Model(nn.Module):
                 self.traced=False
 
             if self.traced:
-                if isinstance(m, Detect) or isinstance(m, IDetect) or isinstance(m, IAuxDetect) or isinstance(m, IKeypoint):
+                if isinstance(m, (Detect, IDetect, IAuxDetect, IKeypoint)):
                     break
 
             if profile:
@@ -611,7 +599,7 @@ class Model(nn.Module):
                 print('%10.1f%10.0f%10.1fms %-40s' % (o, m.np, dt[-1], m.type))
 
             x = m(x)  # run
-            
+
             y.append(x if m.i in self.save else None)  # save output
 
         if profile:
@@ -704,7 +692,7 @@ class Model(nn.Module):
             m = NMS()  # module
             m.f = -1  # from
             m.i = self.model[-1].i + 1  # index
-            self.model.add_module(name='%s' % m.i, module=m)  # add
+            self.model.add_module(name=f'{m.i}', module=m)
             self.eval()
         elif not mode and present:
             print('Removing NMS... ')
@@ -768,9 +756,9 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
         elif m is nn.BatchNorm2d:
             args = [ch[f]]
         elif m is Concat:
-            c2 = sum([ch[x] for x in f])
+            c2 = sum(ch[x] for x in f)
         elif m is Chuncat:
-            c2 = sum([ch[x] for x in f])
+            c2 = sum(ch[x] for x in f)
         elif m is Shortcut:
             c2 = ch[f[0]]
         elif m is Foldcut:
@@ -790,7 +778,7 @@ def parse_model(d, ch):  # model_dict, input_channels(3)
 
         m_ = nn.Sequential(*[m(*args) for _ in range(n)]) if n > 1 else m(*args)  # module
         t = str(m)[8:-2].replace('__main__.', '')  # module type
-        np = sum([x.numel() for x in m_.parameters()])  # number params
+        np = sum(x.numel() for x in m_.parameters())
         m_.i, m_.f, m_.type, m_.np = i, f, t, np  # attach index, 'from' index, type, number params
         logger.info('%3s%18s%3s%10.0f  %-40s%-30s' % (i, f, n, np, t, args))  # print
         save.extend(x % i for x in ([f] if isinstance(f, int) else f) if x != -1)  # append to savelist
