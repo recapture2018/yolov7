@@ -71,9 +71,9 @@ if __name__ == '__main__':
         f = opt.weights.replace('.pt', '.torchscript.pt')  # filename
         ts = torch.jit.trace(model, img, strict=False)
         ts.save(f)
-        print('TorchScript export success, saved as %s' % f)
+        print(f'TorchScript export success, saved as {f}')
     except Exception as e:
-        print('TorchScript export failure: %s' % e)
+        print(f'TorchScript export failure: {e}')
 
     # ONNX export
     try:
@@ -149,7 +149,7 @@ if __name__ == '__main__':
 
         # print(onnx.helper.printable_graph(onnx_model.graph))  # print a human readable model
         onnx.save(onnx_model,f)
-        print('ONNX export success, saved as %s' % f)
+        print(f'ONNX export success, saved as {f}')
 
         if opt.include_nms:
             print('Registering NMS plugin for ONNX...')
@@ -158,7 +158,7 @@ if __name__ == '__main__':
             mo.save(f)
 
     except Exception as e:
-        print('ONNX export failure: %s' % e)
+        print(f'ONNX export failure: {e}')
     # CoreML export
     try:
         import coremltools as ct
@@ -168,9 +168,9 @@ if __name__ == '__main__':
         model = ct.convert(ts, inputs=[ct.ImageType(name='image', shape=img.shape, scale=1 / 255.0, bias=[0, 0, 0])])
         f = opt.weights.replace('.pt', '.mlmodel')  # filename
         model.save(f)
-        print('CoreML export success, saved as %s' % f)
+        print(f'CoreML export success, saved as {f}')
     except Exception as e:
-        print('CoreML export failure: %s' % e)
+        print(f'CoreML export failure: {e}')
 
     # Finish
     print('\nExport complete (%.2fs). Visualize with https://github.com/lutzroeder/netron.' % (time.time() - t))
